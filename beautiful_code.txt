@@ -88,4 +88,68 @@ It does this coversion using this fun macro:
 
 This macro deserves some explaination...
 
+In the USB code, there is a 'probe' function that the driver model calls
+when it has a new USB interface that it wants to find a driver to bind
+to.  This code looks something like the following:
+
+static int usb_probe(struct device *d)
+{
+	struct usb_interface *intf;
+
+	intf = container_of(d, struct usb_interface, dev);
+	...
+
+}
+
+At this point in time, intf points to a valid usb_interface structure,
+and all is good.
+
+But how does this work?
+
+Let's expand the code for the assignment by replacing the types and
+variables:
+
+intf = ({
+	const struct device *_ _mptr = d;
+	(struct usb_interface *)( (char *)_ _mptr - offsetof(struct usb_interface, dev));
+});
+
+Then let's look at the offsetof() call.  That determines how far into a
+structure a field of that structure is.  In the usb_interface structure,
+it is somewhere around 16 bytes into the structure for 32bit processor.
+It's a different location for a 64bit processor, but the compiler knows
+this all at build time, so it will replace the value as part of the
+preprocessing phase, reducing the statement to:
+
+intf = ({
+	const struct device *_ _mptr = d;
+	(struct usb_interface *)( (char *)_ _mptr - 16));
+});
+
+This means that intf can merely be calculated by subtracting 16 from the
+pointer value and moving backwards in memory to now point to the "real"
+structure.  So at runtime, all that happens is a simple static pointer
+statement, and the code moves on.
+
+This is the basis for how the Linux kernel does object oriented
+programming.  You embed a "base class" object within your object, and
+then pass around pointers to that bass class object.  When you get
+called with that pointer, you cast it backwards into the "real" object
+that you "know" it is, and away you go.
+
+Yes, you have now noticed this is extreemly unsafe.  There is no runtime
+checking of anything here.  Your code is blindly assuming it knows what
+the structure that was passed to it was.  This is the opposite of how a
+number of other frameworks work that also implement objects in C.
+Examples of this is gobject from glib.
+
+The advantage of this is that it is fast, really fast.  The disadvantage
+is that you had better know what you are doing.  In the kernel, that
+disadvantage is ok, we know what we are doing, or at least we think so.
+
+In truth, devices are never passed to functions that aren't expecting
+them.  Busses only have one "class" of devices that are associated with
+it, so the bus specific code for can always just know what the device
+type is.
+
 
