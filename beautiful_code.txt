@@ -153,3 +153,16 @@ it, so the bus specific code for can always just know what the device
 type is.
 
 
+
+atomic_add_unless(&kref->refcount, -1, 1))
+
+Adds -1 to the reference count only if refcount was not already 1
+If it succeeded (i.e. refcount was not 1) then the function returns 0
+
+If it failed, then refcount was 1, it's now 0, so try to grab the lock.
+After we grab the lock, we then try to decrement the reference count
+again to see if someone else incremented it before we got the lock.  If
+we return 0, then someone else got here before we did, so unlock and
+return.  If we don't return 0, then we were the last reference, so
+release the memory, and have the release function unlock the lock.
+
