@@ -1,0 +1,91 @@
+
+Based on "Beautiful Code - Leading Programmers Explain How They Think"
+	Edited by Andy Oram and Greg Wilson
+	O'Reilly
+	2007
+
+
+In early 2000, Pat Mochel was working on trying to unify all driver
+subsystems within the Linux kernel.  I happened to be working right
+across the street from him at IBM, and we started working together on
+the project.  My goal was to provide a unique way to identify all
+devices in the kernel, to allow for persistant device naming in a
+unified way.  Pat was worried about power management and suspend /
+resume.  Both tasks needed a way for all devices in the kernel to be
+seen at one point in time.
+
+Previously, all subsystems were islands.  All busses handled devices in
+their own unique way.  Some very well (USB, PCI), some in horrible ways
+(TTY, SCSI), and some not at all (ACPI).  There was also the idea of
+char and block devices in the kernel which was how the kernel exposed
+devices to userspace in a unified way.  Working backwards from a
+character/block device to the physical device that was behind it was an
+impossible task.
+
+Pat came up with 'struct device', a unified thing that all subsystems in
+the kernel should inherit from:
+
+struct device {
+	struct list_head node;
+	struct list_head children;
+	struct device *parent;		/* node in sibling list */
+
+	char name[DEVICE_NAME_SIZE];	/* descriptive ascii string */
+	bus_id[BUS_ID_SIZE];		/* position on parent bus */
+
+	spinlock_t lock;		/* lock for the device to ensure two different layers don't access it at the same time. */
+
+	atomic_t refcount;		/* refcount to make sure the device * persists for the right amount of time */
+
+	struct driver_dir_entry *dir;
+
+	struct device_driver *driver;	/* which driver has allocated this device */
+
+	void *driver_data;		/* data private to the driver */
+
+	void *platform_data;		/* Platform-specific data (e.g. ACPI, BIOS data relevant to device */
+
+	u32 current_state;		/* Current operating state. In ACPI-speak, this is D0-D3, D0 being fully functional, and D3 being off. */
+
+	unsigned char *saved_state;	/* saved device state */
+};
+
+This worked really well.  Every time a device was created in the kernel,
+the bus it was on would create the above structure, register it with the
+kernel, and it was exposed to userspace through something that was
+called 'driverfs' at the time, but is now called 'sysfs' and can be
+found in /sys/ in your system.
+
+To use this structure, you had to "embed" it within a different
+structure, one that your bus-specific code would create, and that code
+would call into the driver core.
+
+An example of embeddeding the structure is the USB interface device:
+
+struct usb_interface {
+	struct usb_interface_descriptor *altsetting;
+	int act_altsetting;	/* active alternate setting */
+	int num_altsetting;	/* number of alternate settings */
+	int max_altsetting;	/* total memory allocated */
+	struct usb_driver *driver;	/* driver bound to the device */
+	struct device dev;
+};
+
+The driver core works by passing it a pointer to 'struct device'.  It
+takes that, adds it to its internal lists, passes it to different bus
+specific structures, and generally manages the lifecycle of the device.
+
+It does this by only handling a pointer to 'struct device' not the
+"larger" structure it is imbedded in.  When the USB bus code gets called
+with a pointer to a struct device, it reverses the pointer back into a
+'struct usb_interface' pointer and goes on its way.
+
+It does this coversion using this fun macro:
+
+#define container_of(ptr, type, member) ({			\
+	const typeof( ((type *)0)->member ) *_ _mptr = (ptr);	\
+	(type *)( (char *)_ _mptr - offsetof(type,member) );})
+
+This macro deserves some explaination...
+
+
